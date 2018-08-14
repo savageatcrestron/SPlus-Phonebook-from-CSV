@@ -1,0 +1,296 @@
+#CATEGORY "10" // Serial
+#symbol_name "Phonebook List Module"
+#DEFAULT_VOLATILE
+#ENABLE_STACK_CHECKING
+#ENABLE_TRACE
+#print_to_trace
+
+#DEFINE_CONSTANT delimCOL ","
+#DEFINE_CONSTANT delimEOL "\x0d\x0a"
+#DEFINE_CONSTANT numPeople 30
+
+digital_input Search, Clear_Search;
+string_input NameToFind[30],RemoteFile[250],LocalFile[100], FTPUsername[30], FTPPassword[30];
+
+digital_output SearchInProgress;
+string_output ToConsole, First_Name[30], Last_Name[30], Phonenumber[30], Email[50];
+ 
+string globalStorage[50][4096];
+
+structure phoneList
+{
+	string plFName[30];
+	string plLName[30];
+	string plNumber[30];
+	string plEmail[50];
+};
+
+phoneList currentList[numPeople];
+  
+function printDataToPanel(string xName)
+{
+	integer x, matchCount;
+	string findThis[30];
+	
+	matchCount = 1;
+
+    if(xName = "")
+    {
+    	for (x=1 to numPeople)
+		{
+         	First_Name[x] = currentList[x].plFName;
+			Last_Name[x] = currentList[x].plLName;
+			Phonenumber[x] = currentList[x].plNumber;
+			Email[x] = currentList[x].plEmail;
+		}
+	}else
+	{
+		for (x=1 to numPeople)
+		{	
+			First_Name[x] = "";
+			Last_Name[x] = "";
+			Phonenumber[x] = "";
+			Email[x] = "";
+
+			if(currentList[x].plFName = xName || currentList[x].plLName = xName)
+			{
+				print("match found to xName");
+				First_Name[matchCount] = currentList[x].plFName;
+				Last_Name[matchCount] = currentList[x].plLName;
+				Phonenumber[matchCount] = currentList[x].plNumber;
+				Email[matchCount] = currentList[x].plEmail;
+				matchCount = matchCount + 1;
+		    }
+		}
+	}
+}
+
+function parseData(string readFromFile)
+{
+	integer c1, c2, c3, c4, c5, c6, c7, eol, count;
+	string singleLine[250], chewData[4096];
+	 
+	count = 1;
+	chewData = readFromFile;
+     
+	while (find(delimEOL, chewData, 1) > 0)
+	{
+		//eol = find(delimEOL, chewData, 1);
+		singleLine = remove(delimEOL, chewData, 1);
+        print("single line = %s", singleLine); 
+	// File in; User Name,First Name,Last Name,Display Name,Job Title,Department,Office Number,Office Phone,Mobile Phone,Fax,Address,City,State or Province,ZIP or Postal Code,Country or Region
+    //			         c1         c2        c3           c4        c5         c6            c7           c8           c9
+	//          12345678901234567890123456789012345678901234567890123456789012345678901234567890
+     
+/*
+		c1 = find(delimCOL, singleLine);		// start of first name
+		print("c1 = %d", c1);
+		c2 = find(delimCOL, singleLine, c1+1);	// end of first name start of last name
+		print("c2 = %d", c2);
+		c3 = find(delimCOL, singleLine, c2+1);	// end of last name
+		print("c3 = %d", c3);
+		c4 = find(delimCOL, singleLine, c3+1);
+		print("c4 = %d", c4);
+		c5 = find(delimCOL, singleLine, c4+1);
+		print("c5 = %d", c5);
+		c6 = find(delimCOL, singleLine, c5+1);	// start of office number
+		print("c6 = %d", c6);
+	    c7 = find(delimCOL, singleLine, c6+1);	// end of office number
+		print("c7 = %d", c7);
+*/
+
+	// User's file = FName, LName, Address, Number
+    //				     c1     c2        c3
+		c1 = find(delimCOL, singleLine);		// start of first name
+		print("c1 = %d", c1);
+		c2 = find(delimCOL, singleLine, c1+1);	// end of first name start of last name
+		print("c2 = %d", c2);
+		c3 = find(delimCOL, singleLine, c2+1);	// end of last name
+		print("c3 = %d", c3);
+		c4 = find(delimEOL, singleLine, c3+1);
+	
+		currentList[count].plFName = mid(singleLine, 1, c1-1);
+		currentList[count].plLName = mid(singleLine, c1+1, c2-c1-1);
+		currentList[count].plNumber = mid(singleLine, c3+1 , c4-c3-1 );
+	
+		count = count + 1;
+	}
+	printDataToPanel("");
+}
+ 
+signed_long_integer_function fillBufCartridge(integer _nFileHandle, integer round, signed_long_integer _pointer)
+{	
+	integer x, stepcount, _errCode;
+	string _sBuf[4096], searching[100], tempText[50][4096];
+	
+	_errCode = fileseek(_nFileHandle, _pointer, SEEK_CUR);
+	print("error code from fileseek = %d", _errCode);
+    
+	if(FileRead(_nFileHandle,_sBuf,4096)>0)
+	{
+	    tempText[round] = _sBuf;
+		x = 1;
+		stepCount = 1;
+		for(x = 4096 to 1 step -1)
+		{
+			searching = mid(tempText[round], x, stepCount);
+			print("currently searching = %s",searching);
+	          	if(find("\x0d\x0a", searching, 1))
+			{
+				print("found round %d lastEOL @ %d",round, x);
+				_pointer = _pointer + x;
+				globalStorage[round] = left(tempText[round], x); 
+				break;
+			}
+			stepCount = stepCount + 1;
+		} 
+		
+	}else{
+		print("file is done");
+		_pointer = 2147483647;
+	}
+	
+	return(_pointer);
+}
+
+function HandleLocalFile(string localFileLocation)
+{
+	integer lastEOL, stepCount, x, round;
+	signed_integer nFileHandle, readErr;
+	signed_long_integer pointer;
+	string searching[100], tempText[50][4096], sBuf[4096];
+
+	StartFileOperations();
+    
+	try
+	{
+		nFileHandle = FileOpen(localFileLocation, _O_RDONLY || _O_BINARY);
+	
+		if (nFileHandle >= 0)
+		{
+			round = 1;
+			pointer = 1;
+			
+			while(pointer <> 2147483647)
+			{
+				pointer = fillBufCartridge(nFileHandle, round, pointer);
+				round = round + 1;
+			}
+  
+			
+
+
+/*
+			FileRead(nFileHandle,sBuf,4096);
+			tempText[1] = sBuf;
+			x = 1;
+			messageLength = len(tempText[1]);
+			stepCount = 1;
+			for(x = 4096 to 1 step -1)
+			{
+				searching = mid(tempText[1], x, stepCount);
+				print("currently searching = %s",searching);
+            	if(find("\x0d\x0a", searching, 1))
+				{
+					print("found lastEOL @ %d", x);
+					pointer = pointer + x;
+					break;
+				}
+				stepCount = stepCount + 1;
+			} 
+			FileRead(nFileHandle,sBuf,4096);
+            tempText[2] = sBuf;
+			x = 1;
+			stepCount = 1;
+			for(x = 4096 to 1 step -1)
+			{
+				searching = mid(tempText[2], x, stepCount);
+				print("currently searching again = %s",searching);
+            	if(find("\x0d\x0a", searching, 1))
+				{
+					print("found next lastEOL @ %d", x);
+					pointer = pointer + x;
+					break;
+				}
+				stepCount = stepCount + 1;
+			} 
+
+
+*/
+
+			print("last pointer found @ %ld", pointer);
+		
+/*
+	    	while(FileRead(nFileHandle, sBuf, 4096) > 0)
+			{
+				parseData(sBuf);
+			}
+*/
+
+			if(FileClose(nFileHandle) <> 0)
+			{
+	        	print("Error closing file\n");
+			}
+		}
+	}	
+	catch
+	{
+		print("Error in File Operation. Check file location and name.");
+	} 
+
+	EndFileOperations();
+   	//parseData(tempText);
+}
+
+function HandleRemoteFile(string remoteFileLocation)
+{
+	string cmdToConsole[400];
+
+	makestring(cmdToConsole, "fget %s %s %s:%s\x0d", remoteFileLocation, LocalFile, FTPUsername, FTPPassword);  
+
+	ToConsole = cmdToConsole;	
+}
+
+function Initialize()
+{
+	SearchInProgress = 1;
+	HandleLocalFile(LocalFile);
+	SearchInProgress = 0;	
+}
+
+push Search
+{
+	SearchInProgress = 1;
+	PrintDataToPanel(NameToFind);
+	SearchInProgress = 0;
+}
+
+push Clear_Search
+{
+	SearchInProgress = 1;
+	PrintDataToPanel("");
+	SearchInProgress = 0;
+}
+
+function Main()
+{
+	WaitForInitializationComplete();
+	While(1)
+	{
+		try
+		{
+			Initialize();
+		}
+		catch
+		{
+		}
+	}
+}
+
+
+            
+
+
+
+
+
